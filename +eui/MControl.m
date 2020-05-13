@@ -136,7 +136,6 @@ classdef MControl < handle
           'defaultClass', {@exp.SignalsExp});
       % build the ui for the gui
       obj.buildUI(parent);
-      set(obj.RootContainer, 'Visible', 'on');
       obj.Parameters = exp.Parameters;
       %obj.LogSubjects.Selected = '';
       obj.NewExpSubjects.Selected = 'default'; % Make default selected subject 'default'
@@ -234,9 +233,7 @@ classdef MControl < handle
       % subject dropdown menu and listener
       obj.NewExpSubjects =... 
         bui.Selector(expSelectGrid,... 
-                     unique([{'default'}; dat.listSubjects])); 
-%       set(subjectLabel, 'FontSize', 11); % Make 'Subject' label larger
-%       set(obj.NewExpSubjects.UIControl, 'FontSize', 11); % Make dropdown box text larger
+                     unique([{'default'}; dat.listSubjects]));
       obj.NewExpSubjects.addlistener('SelectionChanged',...
                                      @obj.expSubjectChanged);
 
@@ -449,18 +446,24 @@ classdef MControl < handle
         defdir = fullfile(pick(dat.paths, 'expDefinitions'));
         [mfile, fpath] = uigetfile(...
           '*.m', 'Select the experiment definition function', defdir);
+        fpath = fullfile(mfile, fpath);
         if ~mfile
           return
         end
+      else  % else set as first exp def in expDefinitions folder
+        fpath = obj.ExpDefs.Option{1};
       end
       
       % set parameters based on selected framework
       switch type
         case 'signals'
           idx = strcmp({obj.NewExpFactory.label},'signals');
+          % change default paramters function handle to infer params for
+          % this specific expDef
           obj.NewExpFactory(idx).defaultParamsFun = ...
-            @()exp.inferParameters(fullfile(fpath, mfile)); % change default paramters function handle to infer params for this specific expDef
-          obj.NewExpFactory(idx).matchTypes{end+1} = fullfile(fpath, mfile); % add specific expDef to NewExpFactory
+            @() exp.inferParameters(fpath);
+          % add specific expDef to NewExpFactory
+          obj.NewExpFactory(idx).matchTypes{end+1} = fpath;
       end
       
       % special cases for default parameter profiles and 'default' subject
@@ -538,24 +541,25 @@ classdef MControl < handle
       end
       
       factory = obj.NewExpFactory; % Find which 'world' we are in
-      typeName = obj.ExpDefs.Selected; 
-      if strcmp(typeName, '<custom...>')
-        typeNameFinal = 'custom';
-      else
-        typeNameFinal = typeName;
-      end
+%       typeName = obj.ExpDefs.Selected; 
+%       if strcmp(typeName, '<custom...>')
+%         typeNameFinal = 'custom';
+%       else
+%         typeNameFinal = typeName;
+%       end
+      typeName = obj.ExpFrameworks.Selected;
       matchTypes = factory(strcmp({factory.label}, typeName)).matchTypes();
       subject = obj.NewExpSubjects.Selected; % Find which subject is selected
       label = 'none';
       set(obj.BeginExpButton, 'Enable', 'off') % Can't run experiment without params!
       switch lower(profile)
-        case '<defaults>'
+        case '<default set>'
           %           if strcmp(obj.ExpDefs.Selected, '<custom...>')
           %             paramStruct = factory(strcmp({factory.label}, typeName)).defaultParamsFun();
           %             label = 'inferred';
           %           else
           paramStruct = factory(strcmp({factory.label}, typeName)).defaultParamsFun();
-          label = 'defaults';
+          label = 'default set';
           %           end
         case '<last for subject>'
           %% find the most recent experiment with parameters of selected type
