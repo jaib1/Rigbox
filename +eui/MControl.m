@@ -587,7 +587,19 @@ classdef MControl < handle
           label = profile;
           saved = dat.loadParamProfiles(typeName);
           paramStruct = saved.(profile);
-          paramStruct.type = typeNameFinal; % override type name with preferred
+          paramStructDefault =...
+            factory(strcmp({factory.label}, typeName)).defaultParamsFun();
+          fn_curParams = fieldnames(paramStruct);
+          fn_defaultParams = fieldnames(paramStructDefault);
+          % check to see if selected parameter set is compatible with exp
+          % def
+          if length(intersect(fn_curParams, fn_defaultParams))...
+             ~= length(fn_curParams)
+            obj.log(['Error: the ''%s'' parameter set is not compatible '...
+                     'with the ''%s'' exp def'],...
+                     profile, obj.ExpDefs.Selected); 
+          end
+          paramStruct.type = typeName; % override type name with preferred
       end
       set(obj.ParamProfileLabel, 'String', label, 'ForegroundColor', [0 0 0]);
       if isfield(paramStruct, 'services')
