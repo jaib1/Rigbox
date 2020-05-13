@@ -222,6 +222,15 @@ classdef MControl < handle
       frameworkLabel = bui.label('Exp Framework', expSelectGrid); 
       expDefLabel = bui.label('Exp Def', expSelectGrid);
       
+      % add 'Options' button
+      obj.RigOptionsButton =...
+        uicontrol('Parent', expSelectGrid,...
+                  'Style', 'pushbutton',...
+                  'String', 'Options',...
+                  'TooltipString', 'Set services and delays',...
+                  'Callback', @(~,~) obj.rigOptions(),...
+                  'Enable', 'off');
+              
       % subject dropdown menu and listener
       obj.NewExpSubjects =... 
         bui.Selector(expSelectGrid,... 
@@ -254,97 +263,119 @@ classdef MControl < handle
       obj.ExpDefs.addlistener('SelectionChanged',...
                               @(~,~) obj.expTypeChanged());
 
+      % add 'Start' button                   
+      obj.BeginExpButton =...
+        uicontrol('Parent', expSelectGrid,...
+                  'Style', 'pushbutton',...
+                  'String', 'Start',...
+                  'TooltipString', 'Start an experiment',...
+                  'Callback', @(~,~) obj.beginExp(),...
+                  'Enable', 'off');                           
       
-      expSelectGrid.ColumnSizes = [80, 200]; % Set size of topgrig (containing Subject and Type dropdowns)
-      expSelectGrid.RowSizes = [30, 24]; % " 
-      
-      %configure new exp control box
-      controlbox = uiextras.HBox('Parent', expSelectBox);
-%       bui.label('Rig', controlbox); % 'Rig' label
-            obj.RigOptionsButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Options' button
-        'String', 'Options',...
-        'TooltipString', 'Set services and delays',...
-        'Callback', @(~,~) obj.rigOptions(),... % When pressed run 'rigOptions' function
-        'Enable', 'off');
-      obj.BeginExpButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Start' button
-        'String', 'Start',...
-        'TooltipString', 'Start an experiment using the parameters',...
-        'Callback', @(~,~) obj.beginExp(),... % When pressed run 'beginExp' function
-        'Enable', 'off');
-      controlbox.Sizes = [80 200 80 80]; % Resize the Rig and Delay boxes
-      
-      expSelectBox.Heights = [55 22];
+      % Set column widths
+      expSelectGrid.ColumnSizes = [100, 200];
       
       % Create the Alyx panel
       obj.AlyxPanel = eui.AlyxPanel(headerBox);
-      addlistener(obj.NewExpSubjects, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
-      addlistener(obj.LogSubjects, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
+      addlistener(obj.NewExpSubjects, 'SelectionChanged',...
+                  @(src, evt) obj.AlyxPanel.dispWaterReq(src, evt));
       
-      % a titled panel for the parameters editor
-      param = uiextras.Panel('Parent', newExpBox, 'Title', 'Parameters', 'Padding', 5);
-      obj.ParamPanel = uiextras.VBox('Parent', param, 'Padding', 5); % Make verticle container for parameters
-      hbox = uiextras.HBox('Parent', obj.ParamPanel); % Make container for 'sets' dropdown boxes
-      bui.label('Current set:', hbox); % Add 'Current set' label
-      obj.ParamProfileLabel = bui.label('none', hbox, 'FontWeight', 'bold'); % Current parameter label
-      hbox.Sizes = [60 400]; % Set size of Current set labels
-      hbox = uiextras.HBox('Parent', obj.ParamPanel, 'Spacing', 2); % Make new HBox for saved sets
+      % Create Param Editor
+      paramBox =...
+        uiextras.Panel('Parent', newExpBox, 'Title', 'Parameters',...
+                       'Padding', 5);
+      % vertical box to hold parameters                   
+      obj.ParamPanel = uiextras.VBox('Parent', paramBox, 'Padding', 5);
+      % horizontal box for choosing parameter sets
+      hbox = uiextras.HBox('Parent', obj.ParamPanel);
+      bui.label('Current set:', hbox);
+      % Current parameter set label
+      obj.ParamProfileLabel =...
+          bui.label('none', hbox, 'FontWeight', 'bold');
+      % Set horizontal width for conditional vs global parameters in px
+      hbox.Sizes = [60 400];
+      % hbox for saved parameter sets
+      hbox = uiextras.HBox('Parent', obj.ParamPanel, 'Spacing', 2);
       bui.label('Saved sets:', hbox);  % Add 'Saved sets' label
       obj.ParamProfiles = bui.Selector(hbox, {'none'}); % Make parameter sets dropdown box with default 'none' entry
-      uicontrol('Parent', hbox,... % Make 'Load' button
+      % 'Load' parameters set button: pass selected parameter set to
+      % `loadParamProfile()` when pressed
+      uicontrol('Parent', hbox,... 
         'Style', 'pushbutton',...
         'String', 'Load',...
-        'Callback', @(~,~) obj.loadParamProfile(obj.ParamProfiles.Selected)); % Pass selected param profile to loadParamProfile() when pressed
-      uicontrol('Parent', hbox,... % Make 'Save' button
+        'Callback',...
+        @(~,~) obj.loadParamProfile(obj.ParamProfiles.Selected));
+      % 'Save' parameters set button
+      uicontrol('Parent', hbox,... 
         'Style', 'pushbutton',...
-        'String', 'Save...',...
-        'Callback', @(~,~) obj.saveParamProfile(),... % When pressed run saveParamProfile() function
-        'Enable', 'on');
-      uicontrol('Parent', hbox,... % Make 'Delete' button
+        'String', 'Save',...
+        'Callback', @(~,~) obj.saveParamProfile());
+      % 'Delete' parameters set button
+      uicontrol('Parent', hbox,... 
         'Style', 'pushbutton',...
-        'String', 'Delete...',...
-        'Callback', @(~,~) obj.delParamProfile(),...% When pressed run delParamProfile() function
-        'Enable', 'on');
-      hbox.Sizes = [60 200 60 60 60]; % Set horizontal sizes for Sets dropdowns and buttons
-      obj.ParamPanel.Sizes = [22 22]; % Set vertical size by changing obj.ParamPanel VBox size
+        'String', 'Delete',...
+        'Callback', @(~,~) obj.delParamProfile());
+      % Set column widths for dropdown menu and buttons
+      hbox.Sizes = [60 200 60 60 60];
+      % Set vertical size for 'Current set' and 'Saved sets'
+      obj.ParamPanel.Sizes = [25 25];
+      % Set header box to take up 120 px, and rest taken up by ParamPanel
+      newExpBox.Sizes = [120 -1];
       
-      newExpBox.Sizes = [58+22 -1]; % Set fixed pixel sizes for parameters panel, -1 = fill rest of space with 'Global' and 'Conditional' Panels
-      
-      %a box on the second tab for running experiments
+      % a box on the 'Experiments' - 'Current' tab for showing info on
+      % current experiments
       runningExpBox = uiextras.VBox('Parent', obj.ExpTabs, 'Padding', 5);
-      obj.ActiveExpsGrid = uiextras.Grid('Parent', runningExpBox, 'Spacing', 5);
+      obj.ActiveExpsGrid =...
+        uiextras.Grid('Parent', runningExpBox, 'Spacing', 5);
       
-      %% Log tab
-      logbox = uiextras.VBox('Parent', obj.TabPanel, 'Padding', 5); % The entire log tab
+      % 'Log' tab, which will contain 'Entries' and 'Weight' subject tabs
+      logbox = uiextras.VBox('Parent', obj.TabPanel, 'Padding', 5);
       
-      hbox = uiextras.HBox('Parent', logbox, 'Padding', 5); % container for 'Subject' text and dropdown box
-      bui.label('Subject', hbox); % 'Subject' text next to dropdown box, Child of hbox
-      obj.LogSubjects = bui.Selector(hbox, unique([{'default'}; dat.listSubjects])); % Subject dropdown box, Child of hbox
-      hbox.Sizes = [50 100]; % resize label and dropdown to be 50px and 100px respectively
-      obj.LogTabs = uiextras.TabPanel('Parent', logbox, 'Padding', 5); % Container for 'Entries' and 'Weights' tab in log
-      obj.Log = eui.Log(obj.LogTabs); % Entries window, all dealt with by +eui/Log.m
+      % create box for selecting Subject and holding plots in 'Log' tab
+      hbox = uiextras.HBox('Parent', logbox, 'Padding', 5);
+      bui.label('Subject', hbox);
+      % subject dropdown menu & listener
+      obj.LogSubjects =...
+        bui.Selector(hbox, unique([{'default'}; dat.listSubjects]));
+      addlistener(obj.LogSubjects, 'SelectionChanged',...
+          @(src, evt) obj.AlyxPanel.dispWaterReq(src, evt));
+      % resize label and dropdown to be 50px and 100px respectively
+      hbox.Sizes = [50 100];
+      % Log tabs, which will contain the 'Entries' and 'Weights' tabs
+      obj.LogTabs = uiextras.TabPanel('Parent', logbox, 'Padding', 5);
+      % 'Entries' window as `eui.Log` object
+      obj.Log = eui.Log(obj.LogTabs); 
       obj.LogSubjects.addlistener('SelectionChanged',...
-        @(~, ~) obj.LogSubjectsChanged()); % Listener for Subject dropdown, sets obj.Log.setSubject to obj.LogSubjects.Selected
+        @(~, ~) obj.LogSubjectsChanged());
+      % Make the 'Entries' tab take up 34 px in width 
       logbox.Sizes = [34 -1];
-      %weights
-      %% weight tab
+
+      % weight tab
       weightBox = uiextras.VBox('Parent', obj.LogTabs, 'Padding', 5);
-      obj.WeightAxes = bui.Axes(weightBox); % Mouse weight plot axes
+      % Mouse weight plot axes
+      obj.WeightAxes = bui.Axes(weightBox); 
       obj.WeightAxes.NextPlot = 'add';
-      hbox = uiextras.HBox('Parent', weightBox, 'Padding', 5); % container below weight plot for buttons
-      uiextras.Empty('Parent', hbox); % empty space for padding (to right-align buttons)
-      uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Tare button
+      % box below `WeightAxes` for 'Tare' and 'Record' buttons
+      hbox = uiextras.HBox('Parent', weightBox, 'Padding', 5); 
+      % empty space for padding (to right-align buttons)
+      uiextras.Empty('Parent', hbox);
+      % Tare button
+      uicontrol('Parent', hbox, 'Style', 'pushbutton',...
         'String', 'Tare scales',...
         'TooltipString', 'Tare the scales',...
         'Callback', @(~,~) obj.WeighingScale.tare(),...
         'Enable', 'on');
-      obj.RecordWeightButton = uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Record button
+      % Record button
+      obj.RecordWeightButton =...
+        uicontrol('Parent', hbox, 'Style', 'pushbutton',...
         'String', 'Record',...
         'TooltipString', 'Record the current weight reading (star symbol)',...
         'Callback', @(~,~) obj.recordWeight(),...
         'Enable', 'off');
-      hbox.Sizes = [-1 80 100]; % resize buttons to be 80 and 100px respectively
-      weightBox.Sizes = [-1 36]; % make hbox size 36px high
-      obj.LogTabs.TabNames = {'Entries' 'Weight'}; % Label tabs
+      % resize buttons to be 80 and 100px respectively
+      hbox.Sizes = [-1 80 100];
+      % make hbox size 36px high
+      weightBox.Sizes = [-1 36];
       
       % setup the tab names/sizes
       obj.TabPanel.TabSize = 80;
@@ -352,6 +383,7 @@ classdef MControl < handle
       obj.TabPanel.SelectedChild = 1;
       obj.ExpTabs.TabNames = {'New', 'Current'};
       obj.ExpTabs.SelectedChild = 1;
+      obj.LogTabs.TabNames = {'Entries' 'Weight'};
       obj.TabPanel.SelectionChangedFcn = @(~,~)obj.tabChanged;
     end
     
