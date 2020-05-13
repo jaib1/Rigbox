@@ -18,44 +18,84 @@ classdef MControl < handle
   % @TODO set properties attributes
   properties
     % struct containing all availiable experiment frameworks and function
-    % handles to constructors for their default parameters
+    % handles to constructors for their default parameters and classes
     NewExpFactory
     % `uiextras.VBox` object containing *all* ui elements in the mc gui
-    RootContainer 
-    LoggingDisplay % control for showing log output
-  
-    AlyxPanel % `eui.AlyxPanel` object
-    LogSubjects % Subject selector control
-    NewExpSubjects % Experiment selector control
-    ExpDefs % Experiment type selector control
-    WeighingScale % HW.WEIGHINGSCALE object for interacting with a balance
-    Log % Handle to the UI element containing the Log tabs
-    RemoteRigs % An array of SRV.STIMULUSCONTROL objects with connection information for each remote rig
-    TabPanel % Handle to the UI element containing the Log and Experiment tabs
-    LastExpPanel % Handle to the most recently instantiated EUI.EXPPANEL object
-  
-    ParamEditor
-    ParamPanel
-    BeginExpButton % The 'Start' button that begins an experiment
-    RigOptionsButton % The 'Options' button that opens the rig options dialog
-    
-    
-    Parameters % A structure containing the currently selected set of parameters
-    WeightAxes % Handle to the BUI.AXES object that holds the axes for the weight plot in the Log tab
-    WeightReadingPlot
-    NewExpParamProfile
-    LogTabs
+    RootContainer
+    % `uiextras.TabPanel` object containing the 'Log' and 'Experiment' tabs
+    TabPanel 
+    % `uicontrol` listbox object for showing log output during experiments
+    LoggingDisplay
+    % `uiextras.TabPanel` object containing the 'New' and 'Current' tabs
+    % in the 'Experiment' tab
     ExpTabs
-    ActiveExpsGrid
+    % `bui.selector` dropdown menu object for selecting a subject in the
+    % 'Experiments' - 'New' tab
+    NewExpSubjects
+    % An array of `srv.StimulusControl` objects with connection information
+    % for each remote rig in the 'Experiments' - 'New' tab
+    RemoteRigs 
+    % Listener functions for the mc gui for reading from the scale and
+    % getting status updates from `RemoteRigs`
     Listeners
-    PrePostExpDelayEdits % Handles to pre (i=1) and post (i=2) experiment delay edit text cotrols
-    Services % Cell array of selected services
-    RecordWeightButton
+    % `bui.selector` dropdown menu object for selecting an exp def in the
+    % 'Experiments' - 'New' tab
+    ExpDefs
+    % 'Options' button that opens the rig options dialog box in the
+    % 'Experiments' - 'New' tab
+    RigOptionsButton
+    % 'Start' button that begins an experiment in the
+    % 'Experiments' - 'New' tab
+    BeginExpButton
+    % `eui.AlyxPanel` object for interfacing with alyx database directly
+    % within mc gui in the 'Experiments' - 'New' tab
+    AlyxPanel
+    % `uiextras.VBox` object containing info on parameter sets in the
+    % 'Experiments' - 'New' tab
+    ParamPanel
+    % `bui.label` object containing the name of the selected parameter set
+    % in the 'Experiments' - 'New' tab
     ParamProfileLabel
+    % `bui.selector` dropdown menu object for selecting a parameter set in
+    % the 'Experiments' - 'New' tab
+    ParamProfiles
+    % `exp.Parameters` object containing the selected parameter set
+    Parameters
+    % `eui.ParamEditor` gui object for visualizig and editing parameters in
+    % the selected parameter set
+    ParamEditor
+    % `uiextras.Grid` object containing a panel for each running experiment
+    % in the 'Experiments' - 'Current' tab
+    ActiveExpsGrid
+    % `eui.Log` object for setting the 'Log' tab
+    Log
+    % `uiextras.TabPanel` object containing the 'Entries' and 'Weight' tabs
+    % in the 'Log' tab
+    LogTabs
+    % `bui.selector` dropdown menu object for selecting a subject in the
+    % 'Log' tab
+    LogSubjects
+    % `bui.axes` object that holds the axes for the weight plots in the
+    % 'Log' tab
+    WeightAxes
+    % scatter object displayed in `WeightAxes` for plotted weight info
+    WeightReadingPlot
+    % 'Record' button for entering subject weight in 'Log' - 'Weight' tab
+    RecordWeightButton
+    % timer set to regularly execute the 'Refresh' event 
     RefreshTimer
+    % `hw.WeighingScale` object for interacting with a scale
+    WeighingScale
+    % `uicontrol` edit text boxes for setting pre (i=1) and post (i=2)
+    % experiment delays; pops up when clicking `RigOptionsButton`
+    PrePostExpDelayEdits
+    % `eui.ExpPanel` object for a running experiment in the 'Experiments'
+    % - 'Current' tab
+    LastExpPanel
   end
   
   events
+    % refreshes/updates plots
     Refresh
   end
   
@@ -80,16 +120,17 @@ classdef MControl < handle
 %         @exp.barMappingParams, @()exp.choiceWorldParams('Surround'),...
 %         @exp.inferParameters});
       
-      % struct containing all experiment frameworks organized by three
+      % struct containing all experiment frameworks organized by four
       % fields: 'label' (the name of the framework), 'matchTypes' (the
-      % names of matching parameter sets), and 'defaultParamsFun' (the
-      % function called to set up the default parameter set for the given
-      % framework)
+      % names of matching parameter sets), 'defaultParamsFun' (the function
+      % called to set up the default parameter set for the given framework,
+      % and 'defaultClass' (the class used to set-up the given framework)
       obj.NewExpFactory =... 
         struct(...
           'label', {'signals'},...
           'matchTypes', {'signals', 'custom'},...
-          'defaultParamsFun', {@exp.inferParameters});
+          'defaultParamsFun', {@exp.inferParameters},...
+          'defaultClass', {@exp.SignalsExp});
       % build the ui for the gui
       obj.buildUI(parent);
       set(obj.RootContainer, 'Visible', 'on');
@@ -230,11 +271,11 @@ classdef MControl < handle
       hbox.Sizes = [60 400]; % Set size of Current set labels
       hbox = uiextras.HBox('Parent', obj.ParamPanel, 'Spacing', 2); % Make new HBox for saved sets
       bui.label('Saved sets:', hbox);  % Add 'Saved sets' label
-      obj.NewExpParamProfile = bui.Selector(hbox, {'none'}); % Make parameter sets dropdown box with default 'none' entry
+      obj.ParamProfiles = bui.Selector(hbox, {'none'}); % Make parameter sets dropdown box with default 'none' entry
       uicontrol('Parent', hbox,... % Make 'Load' button
         'Style', 'pushbutton',...
         'String', 'Load',...
-        'Callback', @(~,~) obj.loadParamProfile(obj.NewExpParamProfile.Selected)); % Pass selected param profile to loadParamProfile() when pressed
+        'Callback', @(~,~) obj.loadParamProfile(obj.ParamProfiles.Selected)); % Pass selected param profile to loadParamProfile() when pressed
       uicontrol('Parent', hbox,... % Make 'Save' button
         'Style', 'pushbutton',...
         'String', 'Save...',...
@@ -262,7 +303,7 @@ classdef MControl < handle
       obj.LogSubjects = bui.Selector(hbox, unique([{'default'}; dat.listSubjects])); % Subject dropdown box, Child of hbox
       hbox.Sizes = [50 100]; % resize label and dropdown to be 50px and 100px respectively
       obj.LogTabs = uiextras.TabPanel('Parent', logbox, 'Padding', 5); % Container for 'Entries' and 'Weights' tab in log
-      obj.Log = eui.Log(obj.LogTabs); % Entries window, all delt with by +eui/Log.m
+      obj.Log = eui.Log(obj.LogTabs); % Entries window, all dealt with by +eui/Log.m
       obj.LogSubjects.addlistener('SelectionChanged',...
         @(~, ~) obj.LogSubjectsChanged()); % Listener for Subject dropdown, sets obj.Log.setSubject to obj.LogSubjects.Selected
       logbox.Sizes = [34 -1];
@@ -370,7 +411,7 @@ classdef MControl < handle
       
       stdProfiles = {'<last for subject>'; '<defaults>'};
       savedProfiles = fieldnames(dat.loadParamProfiles(type));
-      obj.NewExpParamProfile.Option = [stdProfiles; savedProfiles];
+      obj.ParamProfiles.Option = [stdProfiles; savedProfiles];
       str = iff(strcmp('default', obj.NewExpSubjects.Selected) &...
           ~strcmp(obj.ExpDefs.Selected, '<custom...>'),...
           '<defaults>','<last for subject>');
@@ -378,7 +419,7 @@ classdef MControl < handle
     end
     
     function delParamProfile(obj) % Called when 'Delete...' button is pressed next to saved sets
-      profile = obj.NewExpParamProfile.Selected; % Get param profile that was selected from the dropdown?
+      profile = obj.ParamProfiles.Selected; % Get param profile that was selected from the dropdown?
       assert(profile(1) ~= '<', 'Special case profile %s cannot be deleted', profile); % If '<last for subject>' or '<defaults>' is selected give error
       q = sprintf('Are you sure you want to delete parameters profile ''%s''', profile);
       doDelete = strcmp(questdlg(q, 'Delete', 'Yes', 'No', 'No'),  'Yes'); % Find out whether they confirmed delete
@@ -390,15 +431,15 @@ classdef MControl < handle
         end
         dat.delParamProfile(type, profile); 
         %remove the profile from the control options
-        profiles = obj.NewExpParamProfile.Option; % Get parameter profile
-        obj.NewExpParamProfile.Option = profiles(~strcmp(profiles, profile)); % Set new list without deleted profile
+        profiles = obj.ParamProfiles.Option; % Get parameter profile
+        obj.ParamProfiles.Option = profiles(~strcmp(profiles, profile)); % Set new list without deleted profile
         %log the parameters as being deleted
         obj.log('Deleted parameter set ''%s''', profile);
       end
     end
     
     function saveParamProfile(obj) % Called by 'Save...' button press, save a new parameter profile
-      selProfile = obj.NewExpParamProfile.Selected; % Find which set is currently selected
+      selProfile = obj.ParamProfiles.Selected; % Find which set is currently selected
       % This statement is for autofilling the save as input dialog; default
       % value is currently selected profile name, however if a special case
       % profile is selected there is no default value
@@ -424,11 +465,11 @@ classdef MControl < handle
         end
         dat.saveParamProfile(type, validName, obj.Parameters.Struct); % Save
         %add the profile to the control options
-        profiles = obj.NewExpParamProfile.Option;
-        if ~any(strcmp(obj.NewExpParamProfile.Option, validName))
-          obj.NewExpParamProfile.Option = [profiles; validName];
+        profiles = obj.ParamProfiles.Option;
+        if ~any(strcmp(obj.ParamProfiles.Option, validName))
+          obj.ParamProfiles.Option = [profiles; validName];
         end
-        obj.NewExpParamProfile.Selected = validName;
+        obj.ParamProfiles.Selected = validName;
         %set label for loaded profile
         set(obj.ParamProfileLabel, 'String', validName, 'ForegroundColor', [0 0 0]);
         obj.log('Saved parameters as ''%s''', validName);
