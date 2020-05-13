@@ -15,29 +15,31 @@ classdef MControl < handle
   % 2017-02 MW Changed expFactory to allow loading of last params for the
   % specific expDef that was selected
   
+  % @TODO set properties attributes
   properties
+    % struct containing all availiable experiment frameworks and function
+    % handles to constructors for their default parameters
+    NewExpFactory
+    % `uiextras.VBox` object containing *all* ui elements in the mc gui
+    RootContainer 
     LoggingDisplay % control for showing log output
-  end
   
-  properties (SetAccess = private)
-    AlyxPanel % holds the AlyxPanel object (see buildUI(), eui.AlyxPanel())
-    LogSubject % Subject selector control
-    NewExpSubject % Experiment selector control
-    NewExpType % Experiment type selector control
+    AlyxPanel % `eui.AlyxPanel` object
+    LogSubjects % Subject selector control
+    NewExpSubjects % Experiment selector control
+    ExpDefs % Experiment type selector control
     WeighingScale % HW.WEIGHINGSCALE object for interacting with a balance
     Log % Handle to the UI element containing the Log tabs
-    RemoteRigs % An array of SRV.STIMULUSCONTROL objects with connection information for each romote rig
+    RemoteRigs % An array of SRV.STIMULUSCONTROL objects with connection information for each remote rig
     TabPanel % Handle to the UI element containing the Log and Experiment tabs
     LastExpPanel % Handle to the most recently instantiated EUI.EXPPANEL object
-  end
   
-  properties (Access = private)
     ParamEditor
     ParamPanel
     BeginExpButton % The 'Start' button that begins an experiment
     RigOptionsButton % The 'Options' button that opens the rig options dialog
-    NewExpFactory % A struct containing all availiable experiment types and function handles to constructors for their default parameters
-    RootContainer
+    
+    
     Parameters % A structure containing the currently selected set of parameters
     WeightAxes % Handle to the BUI.AXES object that holds the axes for the weight plot in the Log tab
     WeightReadingPlot
@@ -57,28 +59,43 @@ classdef MControl < handle
     Refresh
   end
   
+  % @TODO set methods attributes
   methods
-    function obj = MControl(parent) % Parent here is the MC window
-      obj.Parameters = exp.Parameters;
-      obj.NewExpFactory = struct(...
-        'label',...
-        {'ChoiceWorld' 'DiscWorld' 'GaborMapping' ...
-        'BarMapping' 'SurroundChoiceWorld' '<custom...>'},...
-        'matchTypes', {{'ChoiceWorld' 'SingleTargetChoiceWorld'},...
-        {'DiscWorld'},...
-        {'GaborMapping'},...
-        {'BarMapping'},...
-        {'SurroundChoiceWorld'},...
-        {'custom' ''}},...
-        'defaultParamsFun',...
-        {@exp.choiceWorldParams, @exp.discWorldParams,...
-        @exp.gaborMappingParams,...
-        @exp.barMappingParams, @()exp.choiceWorldParams('Surround'),...
-        @exp.inferParameters}); % in signals/ this function returns a struct of parameters
+ 
+    function obj = MControl(parent)
+    % `parent` is a figure object
+%       obj.NewExpFactory = struct(...
+%         'label',...
+%         {'ChoiceWorld' 'DiscWorld' 'GaborMapping' ...
+%         'BarMapping' 'SurroundChoiceWorld' '<custom...>'},...
+%         'matchTypes', {{'ChoiceWorld' 'SingleTargetChoiceWorld'},...
+%         {'DiscWorld'},...
+%         {'GaborMapping'},...
+%         {'BarMapping'},...
+%         {'SurroundChoiceWorld'},...
+%         {'custom' ''}},...
+%         'defaultParamsFun',...
+%         {@exp.choiceWorldParams, @exp.discWorldParams,...
+%         @exp.gaborMappingParams,...
+%         @exp.barMappingParams, @()exp.choiceWorldParams('Surround'),...
+%         @exp.inferParameters});
+      
+      % struct containing all experiment frameworks organized by three
+      % fields: 'label' (the name of the framework), 'matchTypes' (the
+      % names of matching parameter sets), and 'defaultParamsFun' (the
+      % function called to set up the default parameter set for the given
+      % framework)
+      obj.NewExpFactory =... 
+        struct(...
+          'label', {'signals'},...
+          'matchTypes', {'signals', 'custom'},...
+          'defaultParamsFun', {@exp.inferParameters});
+      % build the ui for the gui
       obj.buildUI(parent);
       set(obj.RootContainer, 'Visible', 'on');
-      %obj.LogSubject.Selected = '';
-      obj.NewExpSubject.Selected = 'default'; % Make default selected subject 'default'
+      obj.Parameters = exp.Parameters;
+      %obj.LogSubjects.Selected = '';
+      obj.NewExpSubjects.Selected = 'default'; % Make default selected subject 'default'
       %obj.expTypeChanged();
       rig = hw.devices([], false);
       obj.RefreshTimer = timer('Period', 0.1, 'ExecutionMode', 'fixedSpacing',...
@@ -98,8 +115,185 @@ classdef MControl < handle
         end
       catch
         obj.log('Warning: could not connect to weighing scales');
-      end      
+      end    
+    end
+    
+    function buildUI(obj, parent)
+    % `parent` is a figure object
+    %
+    % UI Layout:
+    % ----------
+    % Root Container `obj.RootContainer`
+    %   Root Container Tabs `obj.TabPanel`
+    %     Experiments Tab `obj.ExpTabs`
+    %       New Tab `newExpBox`
+    %         Header Box `headerBox`
+    %           Exp Select box `expSelectBox`
+    %           Subject, Rig, Exp Framework, Exp Def labels
+    %             Exp Select grid `expSelectGrid`
+    %               Subject, Rig, Exp Framework, Exp Def dropdowns
+    %               Options, Start buttons
+    %           Alyx Panel `obj.AlyxPanel`
+    %           
+    %         Params Panel `param`
+    %       Current Tab `runningExpBox`
+    %     Log Tab
+        
+      % Container for all UI objects in the MC GUI
+      obj.RootContainer = uiextras.VBox('Parent', parent,...
+        'DeleteFcn', @(~,~) obj.cleanup(), 'Visible', 'on');
+
+      % The main tab panel, which will contain the 'Experiments' and 'Log'
+      % tabs
+      obj.TabPanel = uiextras.TabPanel('Parent', obj.RootContainer, 'Padding', 5);
+
+      % The message area at the bottom of the MC GUI
+      obj.LoggingDisplay =...
+        uicontrol('Parent', obj.RootContainer, 'Style', 'listbox',...
+                  'Enable', 'inactive', 'String', {},...
+                  'Tag', 'Logging Display');
+
+      % The `TabPanel` size will vary as a function of the figure size,
+      % while the `LoggingDisplay` size has a fixed height of 72 px
+      obj.RootContainer.Sizes = [-1 72];
       
+      % Experiment tabs, which will contain the 'New' and 'Current'
+      % experiments tabs
+      obj.ExpTabs = uiextras.TabPanel('Parent', obj.TabPanel);
+      obj.ExpTabs.TabTitles{1} = 'Experiments';
+      
+      % A box in the 'Experiments' tab, which will contain everything
+      % needed to start a new experiment
+      newExpBox = uiextras.VBox('Parent', obj.ExpTabs, 'Padding', 5);
+      
+      % A box in `newExpBox`, which will contain 2 boxes: 
+      % 1) `expSelectBox`, which will contain subject, rig, exp
+      % framework, and exp def dropdown menus, and 'start' and 'options'
+      % buttons
+      % 2) `obj.AlyxPanel`, an Alyx panel 
+      headerBox = uix.HBox('Parent', newExpBox);
+      expSelectBox = uix.VBox('Parent', headerBox);
+      expSelectGrid = uiextras.Grid('Parent', expSelectBox);
+      subjectLabel = bui.label('Subject', expSelectGrid);
+      rigLabel = bui.label('Rig'); 
+      frameworkLabel = bui.label('Exp Framework', expSelectGrid); 
+      expDefLabel = bui.label('Exp Def', expSelectGrid);
+      
+      % subject dropdown menu
+      obj.NewExpSubjects =... 
+        bui.Selector(expSelectGrid,... 
+                     unique([{'default'}; dat.listSubjects])); 
+%       set(subjectLabel, 'FontSize', 11); % Make 'Subject' label larger
+%       set(obj.NewExpSubjects.UIControl, 'FontSize', 11); % Make dropdown box text larger
+      % listener for subject selection
+      obj.NewExpSubjects.addlistener('SelectionChanged',...
+                                    @obj.expSubjectChanged); 
+      
+      obj.ExpDefs =...
+          bui.Selector(expSelectGrid, {obj.NewExpFactory.label});
+      obj.ExpDefs.addlistener('SelectionChanged', @(~,~) obj.expTypeChanged()); % Add listener for experiment type change
+      
+      expSelectGrid.ColumnSizes = [80, 200]; % Set size of topgrig (containing Subject and Type dropdowns)
+      expSelectGrid.RowSizes = [30, 24]; % " 
+      
+      %configure new exp control box
+      controlbox = uiextras.HBox('Parent', expSelectBox);
+%       bui.label('Rig', controlbox); % 'Rig' label
+      obj.RemoteRigs = bui.Selector(controlbox, srv.stimulusControllers); % Rig dropdown box
+      obj.RemoteRigs.addlistener('SelectionChanged', @(src,~) obj.remoteRigChanged); % Add listener for rig selection change
+      obj.Listeners = arrayfun(@obj.listenToRig, obj.RemoteRigs.Option, 'Uni', false); % Add listeners for each rig (keep track of whether they're connected, running, etc.)
+      obj.RigOptionsButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Options' button
+        'String', 'Options',...
+        'TooltipString', 'Set services and delays',...
+        'Callback', @(~,~) obj.rigOptions(),... % When pressed run 'rigOptions' function
+        'Enable', 'off');
+      obj.BeginExpButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Start' button
+        'String', 'Start',...
+        'TooltipString', 'Start an experiment using the parameters',...
+        'Callback', @(~,~) obj.beginExp(),... % When pressed run 'beginExp' function
+        'Enable', 'off');
+      controlbox.Sizes = [80 200 80 80]; % Resize the Rig and Delay boxes
+      
+      expSelectBox.Heights = [55 22];
+      
+      % Create the Alyx panel
+      obj.AlyxPanel = eui.AlyxPanel(headerBox);
+      addlistener(obj.NewExpSubjects, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
+      addlistener(obj.LogSubjects, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
+      
+      % a titled panel for the parameters editor
+      param = uiextras.Panel('Parent', newExpBox, 'Title', 'Parameters', 'Padding', 5);
+      obj.ParamPanel = uiextras.VBox('Parent', param, 'Padding', 5); % Make verticle container for parameters
+      hbox = uiextras.HBox('Parent', obj.ParamPanel); % Make container for 'sets' dropdown boxes
+      bui.label('Current set:', hbox); % Add 'Current set' label
+      obj.ParamProfileLabel = bui.label('none', hbox, 'FontWeight', 'bold'); % Current parameter label
+      hbox.Sizes = [60 400]; % Set size of Current set labels
+      hbox = uiextras.HBox('Parent', obj.ParamPanel, 'Spacing', 2); % Make new HBox for saved sets
+      bui.label('Saved sets:', hbox);  % Add 'Saved sets' label
+      obj.NewExpParamProfile = bui.Selector(hbox, {'none'}); % Make parameter sets dropdown box with default 'none' entry
+      uicontrol('Parent', hbox,... % Make 'Load' button
+        'Style', 'pushbutton',...
+        'String', 'Load',...
+        'Callback', @(~,~) obj.loadParamProfile(obj.NewExpParamProfile.Selected)); % Pass selected param profile to loadParamProfile() when pressed
+      uicontrol('Parent', hbox,... % Make 'Save' button
+        'Style', 'pushbutton',...
+        'String', 'Save...',...
+        'Callback', @(~,~) obj.saveParamProfile(),... % When pressed run saveParamProfile() function
+        'Enable', 'on');
+      uicontrol('Parent', hbox,... % Make 'Delete' button
+        'Style', 'pushbutton',...
+        'String', 'Delete...',...
+        'Callback', @(~,~) obj.delParamProfile(),...% When pressed run delParamProfile() function
+        'Enable', 'on');
+      hbox.Sizes = [60 200 60 60 60]; % Set horizontal sizes for Sets dropdowns and buttons
+      obj.ParamPanel.Sizes = [22 22]; % Set vertical size by changing obj.ParamPanel VBox size
+      
+      newExpBox.Sizes = [58+22 -1]; % Set fixed pixel sizes for parameters panel, -1 = fill rest of space with 'Global' and 'Conditional' Panels
+      
+      %a box on the second tab for running experiments
+      runningExpBox = uiextras.VBox('Parent', obj.ExpTabs, 'Padding', 5);
+      obj.ActiveExpsGrid = uiextras.Grid('Parent', runningExpBox, 'Spacing', 5);
+      
+      %% Log tab
+      logbox = uiextras.VBox('Parent', obj.TabPanel, 'Padding', 5); % The entire log tab
+      
+      hbox = uiextras.HBox('Parent', logbox, 'Padding', 5); % container for 'Subject' text and dropdown box
+      bui.label('Subject', hbox); % 'Subject' text next to dropdown box, Child of hbox
+      obj.LogSubjects = bui.Selector(hbox, unique([{'default'}; dat.listSubjects])); % Subject dropdown box, Child of hbox
+      hbox.Sizes = [50 100]; % resize label and dropdown to be 50px and 100px respectively
+      obj.LogTabs = uiextras.TabPanel('Parent', logbox, 'Padding', 5); % Container for 'Entries' and 'Weights' tab in log
+      obj.Log = eui.Log(obj.LogTabs); % Entries window, all delt with by +eui/Log.m
+      obj.LogSubjects.addlistener('SelectionChanged',...
+        @(~, ~) obj.LogSubjectsChanged()); % Listener for Subject dropdown, sets obj.Log.setSubject to obj.LogSubjects.Selected
+      logbox.Sizes = [34 -1];
+      %weights
+      %% weight tab
+      weightBox = uiextras.VBox('Parent', obj.LogTabs, 'Padding', 5);
+      obj.WeightAxes = bui.Axes(weightBox); % Mouse weight plot axes
+      obj.WeightAxes.NextPlot = 'add';
+      hbox = uiextras.HBox('Parent', weightBox, 'Padding', 5); % container below weight plot for buttons
+      uiextras.Empty('Parent', hbox); % empty space for padding (to right-align buttons)
+      uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Tare button
+        'String', 'Tare scales',...
+        'TooltipString', 'Tare the scales',...
+        'Callback', @(~,~) obj.WeighingScale.tare(),...
+        'Enable', 'on');
+      obj.RecordWeightButton = uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Record button
+        'String', 'Record',...
+        'TooltipString', 'Record the current weight reading (star symbol)',...
+        'Callback', @(~,~) obj.recordWeight(),...
+        'Enable', 'off');
+      hbox.Sizes = [-1 80 100]; % resize buttons to be 80 and 100px respectively
+      weightBox.Sizes = [-1 36]; % make hbox size 36px high
+      obj.LogTabs.TabNames = {'Entries' 'Weight'}; % Label tabs
+      
+      % setup the tab names/sizes
+      obj.TabPanel.TabSize = 80;
+      obj.TabPanel.TabNames = {'Experiments', 'Log'};
+      obj.TabPanel.SelectedChild = 1;
+      obj.ExpTabs.TabNames = {'New', 'Current'};
+      obj.ExpTabs.SelectedChild = 1;
+      obj.TabPanel.SelectionChangedFcn = @(~,~)obj.tabChanged;
     end
     
     function delete(obj)
@@ -109,9 +303,7 @@ classdef MControl < handle
         delete(obj.RootContainer);
       end
     end
-  end
   
-  methods (Access = protected)
     function newScalesReading(obj, ~, ~)
       if obj.TabPanel.SelectedChild == 1 && obj.LogTabs.SelectedChild == 2
         obj.plotWeightReading(); %refresh weighing scale reading
@@ -122,9 +314,9 @@ classdef MControl < handle
     % Function to change which subject Alyx uses when user changes tab
       if ~obj.AlyxPanel.AlyxInstance.IsLoggedIn; return; end
       if obj.TabPanel.SelectedChild == 1 % Log tab
-        obj.AlyxPanel.dispWaterReq(obj.LogSubject);
+        obj.AlyxPanel.dispWaterReq(obj.LogSubjects);
       else % SelectedChild == 2 Experiment tab
-        obj.AlyxPanel.dispWaterReq(obj.NewExpSubject);
+        obj.AlyxPanel.dispWaterReq(obj.NewExpSubjects);
       end
     end
     
@@ -136,51 +328,51 @@ classdef MControl < handle
                 obj.expTypeChanged(); 
             case 'Connected' % user logged in to Alyx
                 % Change subject list to database list
-                obj.NewExpSubject.Option = obj.AlyxPanel.SubjectList;
-                obj.LogSubject.Option = obj.AlyxPanel.SubjectList;
+                obj.NewExpSubjects.Option = obj.AlyxPanel.SubjectList;
+                obj.LogSubjects.Option = obj.AlyxPanel.SubjectList;
                 % if selected is not in the database list, switch to
                 % default
-                if ~any(strcmp(obj.NewExpSubject.Selected, obj.AlyxPanel.SubjectList))
-                    obj.NewExpSubject.Selected = 'default';
+                if ~any(strcmp(obj.NewExpSubjects.Selected, obj.AlyxPanel.SubjectList))
+                    obj.NewExpSubjects.Selected = 'default';
                     obj.expTypeChanged();
                 end
-                if ~any(strcmp(obj.LogSubject.Selected, obj.AlyxPanel.SubjectList))
-                    obj.LogSubject.Selected = 'default';
+                if ~any(strcmp(obj.LogSubjects.Selected, obj.AlyxPanel.SubjectList))
+                    obj.LogSubjects.Selected = 'default';
                     obj.expTypeChanged();
                 end
-                obj.AlyxPanel.dispWaterReq(obj.NewExpSubject);
+                obj.AlyxPanel.dispWaterReq(obj.NewExpSubjects);
             case 'Disconnected' % user logged out of Alyx
-                obj.NewExpSubject.Option = unique([{'default'}; dat.listSubjects]);
-                obj.LogSubject.Option = unique([{'default'}; dat.listSubjects]);
+                obj.NewExpSubjects.Option = unique([{'default'}; dat.listSubjects]);
+                obj.LogSubjects.Option = unique([{'default'}; dat.listSubjects]);
         end
     end
     
     function expTypeChanged(obj)
-      if strcmp(obj.NewExpType.Selected, '<custom...>')
+      if strcmp(obj.ExpDefs.Selected, '<custom...>')
         defdir = fullfile(pick(dat.paths, 'expDefinitions'));
         [mfile, fpath] = uigetfile(...
           '*.m', 'Select the experiment definition function', defdir);
         if ~mfile
-          obj.NewExpType.SelectedIdx = 1; % If no file selected, default back to ChoiceWorld
+          obj.ExpDefs.SelectedIdx = 1; % If no file selected, default back to ChoiceWorld
           return
         end
         custidx = strcmp({obj.NewExpFactory.label},'<custom...>');
         obj.NewExpFactory(custidx).defaultParamsFun = ...
           @()exp.inferParameters(fullfile(fpath, mfile)); % change default paramters function handle to infer params for this specific expDef
-        obj.NewExpFactory(custidx).matchTypes{2} = fullfile(fpath, mfile); % add specific expDef to NewExpFactory
+        obj.NewExpFactory(custidx).matchTypes{end+1} = fullfile(fpath, mfile); % add specific expDef to NewExpFactory
       end
       
-      if strcmp(obj.NewExpType.Selected, '<custom...>')
+      if strcmp(obj.ExpDefs.Selected, '<custom...>')
         type = 'custom';
       else
-        type = obj.NewExpType.Selected;
+        type = obj.ExpDefs.Selected;
       end
       
       stdProfiles = {'<last for subject>'; '<defaults>'};
       savedProfiles = fieldnames(dat.loadParamProfiles(type));
       obj.NewExpParamProfile.Option = [stdProfiles; savedProfiles];
-      str = iff(strcmp('default', obj.NewExpSubject.Selected) &...
-          ~strcmp(obj.NewExpType.Selected, '<custom...>'),...
+      str = iff(strcmp('default', obj.NewExpSubjects.Selected) &...
+          ~strcmp(obj.ExpDefs.Selected, '<custom...>'),...
           '<defaults>','<last for subject>');
       obj.loadParamProfile(str);
     end
@@ -191,10 +383,10 @@ classdef MControl < handle
       q = sprintf('Are you sure you want to delete parameters profile ''%s''', profile);
       doDelete = strcmp(questdlg(q, 'Delete', 'Yes', 'No', 'No'),  'Yes'); % Find out whether they confirmed delete
       if doDelete % They pressed 'Yes'
-        if strcmp(obj.NewExpType.Selected, '<custom...>') % Was it a signals parameter?
+        if strcmp(obj.ExpDefs.Selected, '<custom...>') % Was it a signals parameter?
           type = 'custom';
         else
-          type = obj.NewExpType.Selected;
+          type = obj.ExpDefs.Selected;
         end
         dat.delParamProfile(type, profile); 
         %remove the profile from the control options
@@ -225,10 +417,10 @@ classdef MControl < handle
         doSave = strcmp(questdlg(q, 'Name', 'Yes', 'No', 'No'),  'Yes'); % Do they still want to save with suggested name?
       end
       if doSave % Going ahead with save
-        if strcmp(obj.NewExpType.Selected, '<custom...>') % Is parameter set for signals?
+        if strcmp(obj.ExpDefs.Selected, '<custom...>') % Is parameter set for signals?
           type = 'custom';
         else
-          type = obj.NewExpType.Selected; % Which world is this set for?
+          type = obj.ExpDefs.Selected; % Which world is this set for?
         end
         dat.saveParamProfile(type, validName, obj.Parameters.Struct); % Save
         %add the profile to the control options
@@ -251,19 +443,19 @@ classdef MControl < handle
       end
       
       factory = obj.NewExpFactory; % Find which 'world' we are in
-      typeName = obj.NewExpType.Selected; 
+      typeName = obj.ExpDefs.Selected; 
       if strcmp(typeName, '<custom...>')
         typeNameFinal = 'custom';
       else
         typeNameFinal = typeName;
       end
       matchTypes = factory(strcmp({factory.label}, typeName)).matchTypes();
-      subject = obj.NewExpSubject.Selected; % Find which subject is selected
+      subject = obj.NewExpSubjects.Selected; % Find which subject is selected
       label = 'none';
       set(obj.BeginExpButton, 'Enable', 'off') % Can't run experiment without params!
       switch lower(profile)
         case '<defaults>'
-          %           if strcmp(obj.NewExpType.Selected, '<custom...>')
+          %           if strcmp(obj.ExpDefs.Selected, '<custom...>')
           %             paramStruct = factory(strcmp({factory.label}, typeName)).defaultParamsFun();
           %             label = 'inferred';
           %           else
@@ -565,7 +757,7 @@ classdef MControl < handle
         end
         % Save the current instance of Alyx so that eui.ExpPanel can register water to the correct account
         if ~obj.AlyxPanel.AlyxInstance.IsLoggedIn &&...
-            ~strcmp(obj.NewExpSubject.Selected,'default') &&...
+            ~strcmp(obj.NewExpSubjects.Selected,'default') &&...
             ~obj.AlyxPanel.AlyxInstance.Headless
           try
             obj.AlyxPanel.login();
@@ -582,7 +774,7 @@ classdef MControl < handle
             'List of experiment services to use during the experiment');
         % Create new experiment reference
         [expRef, ~, url] = obj.AlyxPanel.AlyxInstance.newExp(...
-          obj.NewExpSubject.Selected, now, obj.Parameters.Struct); 
+          obj.NewExpSubjects.Selected, now, obj.Parameters.Struct); 
         % Add a copy of the AlyxInstance to the rig object for later
         % water registration, &c.
         rig.AlyxInstance = obj.AlyxPanel.AlyxInstance;
@@ -604,7 +796,7 @@ classdef MControl < handle
       entries = obj.Log.entriesByType('weight-grams');
       datenums = floor([entries.date]);
       obj.WeightAxes.clear();
-      if obj.AlyxPanel.AlyxInstance.IsLoggedIn && ~strcmp(obj.LogSubject.Selected,'default')
+      if obj.AlyxPanel.AlyxInstance.IsLoggedIn && ~strcmp(obj.LogSubjects.Selected,'default')
         obj.AlyxPanel.viewSubjectHistory(obj.WeightAxes.Handle)
         rotateticklabel(obj.WeightAxes.Handle, 45);
       else
@@ -663,13 +855,13 @@ classdef MControl < handle
       arrayfun(@(r) r.disconnect(), obj.RemoteRigs.Option);
     end
     
-    function logSubjectChanged(obj)
-      obj.Log.setSubject(obj.LogSubject.Selected);
+    function LogSubjectsChanged(obj)
+      obj.Log.setSubject(obj.LogSubjects.Selected);
       obj.updateWeightPlot();
     end
     
     function recordWeight(obj)
-      subject = obj.LogSubject.Selected;
+      subject = obj.LogSubjects.Selected;
       grams = get(obj.WeightReadingPlot, 'YData');
       dat.addLogEntry(subject, now, 'weight-grams', grams, '');            
       
@@ -678,143 +870,10 @@ classdef MControl < handle
       obj.AlyxPanel.recordWeight(grams, subject)
       
       %refresh log entries so new weight reading is plotted
-      obj.Log.setSubject(obj.LogSubject.Selected);
+      obj.Log.setSubject(obj.LogSubjects.Selected);
       obj.updateWeightPlot();
     end
-    
-    function buildUI(obj, parent) % Parent here is the MC window (figure)
-      obj.RootContainer = uiextras.VBox('Parent', parent,...
-        'DeleteFcn', @(~,~) obj.cleanup(), 'Visible', 'on');
-      %       drawnow;
-      
-      % tabs for doing different things with the selected subject
-      obj.TabPanel = uiextras.TabPanel('Parent', obj.RootContainer, 'Padding', 5);
-      obj.LoggingDisplay = uicontrol('Parent', obj.RootContainer, 'Style', 'listbox',...
-        'Enable', 'inactive', 'String', {}, 'Tag', 'Logging Display'); % This is the messege area at the bottom of mc
-      obj.RootContainer.Sizes = [-1 72]; % TabPanel variable size with wieght 1; LoggingDisplay fixed height of 72px
-      
-      %% Log tab
-      logbox = uiextras.VBox('Parent', obj.TabPanel, 'Padding', 5); % The entire log tab
-      
-      hbox = uiextras.HBox('Parent', logbox, 'Padding', 5); % container for 'Subject' text and dropdown box
-      bui.label('Subject', hbox); % 'Subject' text next to dropdown box, Child of hbox
-      obj.LogSubject = bui.Selector(hbox, unique([{'default'}; dat.listSubjects])); % Subject dropdown box, Child of hbox
-      hbox.Sizes = [50 100]; % resize label and dropdown to be 50px and 100px respectively
-      obj.LogTabs = uiextras.TabPanel('Parent', logbox, 'Padding', 5); % Container for 'Entries' and 'Weights' tab in log
-      obj.Log = eui.Log(obj.LogTabs); % Entries window, all delt with by +eui/Log.m
-      obj.LogSubject.addlistener('SelectionChanged',...
-        @(~, ~) obj.logSubjectChanged()); % Listener for Subject dropdown, sets obj.Log.setSubject to obj.LogSubject.Selected
-      logbox.Sizes = [34 -1];
-      %weights
-      %% weight tab
-      weightBox = uiextras.VBox('Parent', obj.LogTabs, 'Padding', 5);
-      obj.WeightAxes = bui.Axes(weightBox); % Mouse weight plot axes
-      obj.WeightAxes.NextPlot = 'add';
-      hbox = uiextras.HBox('Parent', weightBox, 'Padding', 5); % container below weight plot for buttons
-      uiextras.Empty('Parent', hbox); % empty space for padding (to right-align buttons)
-      uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Tare button
-        'String', 'Tare scales',...
-        'TooltipString', 'Tare the scales',...
-        'Callback', @(~,~) obj.WeighingScale.tare(),...
-        'Enable', 'on');
-      obj.RecordWeightButton = uicontrol('Parent', hbox, 'Style', 'pushbutton',... % Record button
-        'String', 'Record',...
-        'TooltipString', 'Record the current weight reading (star symbol)',...
-        'Callback', @(~,~) obj.recordWeight(),...
-        'Enable', 'off');
-      hbox.Sizes = [-1 80 100]; % resize buttons to be 80 and 100px respectively
-      weightBox.Sizes = [-1 36]; % make hbox size 36px high
-      obj.LogTabs.TabNames = {'Entries' 'Weight'}; % Label tabs
-      
-      %% Experiment tab
-      obj.ExpTabs = uiextras.TabPanel('Parent', obj.TabPanel);
-      
-      % a box on the first tab for new experiments
-      newExpBox = uiextras.VBox('Parent', obj.ExpTabs, 'Padding', 5);
-      
-      headerBox = uix.HBox('Parent', newExpBox); % new container to allow alyx to go to the right of the rest of the header
-      leftSideBox = uix.VBox('Parent', headerBox);      
-      
-      % controls for subject, exp type
-      topgrid = uiextras.Grid('Parent', leftSideBox); % grid for containing everything within the tab
-      subjectLabel = bui.label('Subject', topgrid); % 'Subject' label
-      bui.label('Type', topgrid); % 'Type' label
-      obj.NewExpSubject = bui.Selector(topgrid, unique([{'default'}; dat.listSubjects])); % Subject dropdown box
-      set(subjectLabel, 'FontSize', 11); % Make 'Subject' label larger
-      set(obj.NewExpSubject.UIControl, 'FontSize', 11); % Make dropdown box text larger
-      obj.NewExpSubject.addlistener('SelectionChanged', @obj.expSubjectChanged); % Add listener for subject selection
-      obj.NewExpType = bui.Selector(topgrid, {obj.NewExpFactory.label}); % Make experiment type dropdown box
-      obj.NewExpType.addlistener('SelectionChanged', @(~,~) obj.expTypeChanged()); % Add listener for experiment type change
-      
-      topgrid.ColumnSizes = [80, 200]; % Set size of topgrig (containing Subject and Type dropdowns)
-      topgrid.RowSizes = [30, 24]; % " 
-      
-      %configure new exp control box
-      controlbox = uiextras.HBox('Parent', leftSideBox);
-      bui.label('Rig', controlbox); % 'Rig' label
-      obj.RemoteRigs = bui.Selector(controlbox, srv.stimulusControllers); % Rig dropdown box
-      obj.RemoteRigs.addlistener('SelectionChanged', @(src,~) obj.remoteRigChanged); % Add listener for rig selection change
-      obj.Listeners = arrayfun(@obj.listenToRig, obj.RemoteRigs.Option, 'Uni', false); % Add listeners for each rig (keep track of whether they're connected, running, etc.)
-      obj.RigOptionsButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Options' button
-        'String', 'Options',...
-        'TooltipString', 'Set services and delays',...
-        'Callback', @(~,~) obj.rigOptions(),... % When pressed run 'rigOptions' function
-        'Enable', 'off');
-      obj.BeginExpButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Start' button
-        'String', 'Start',...
-        'TooltipString', 'Start an experiment using the parameters',...
-        'Callback', @(~,~) obj.beginExp(),... % When pressed run 'beginExp' function
-        'Enable', 'off');
-      controlbox.Sizes = [80 200 80 80]; % Resize the Rig and Delay boxes
-      
-      leftSideBox.Heights = [55 22];
-      
-      % Create the Alyx panel
-      obj.AlyxPanel = eui.AlyxPanel(headerBox);
-      addlistener(obj.NewExpSubject, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
-      addlistener(obj.LogSubject, 'SelectionChanged', @(src, evt)obj.AlyxPanel.dispWaterReq(src, evt));
-      
-      % a titled panel for the parameters editor
-      param = uiextras.Panel('Parent', newExpBox, 'Title', 'Parameters', 'Padding', 5);
-      obj.ParamPanel = uiextras.VBox('Parent', param, 'Padding', 5); % Make verticle container for parameters
-      hbox = uiextras.HBox('Parent', obj.ParamPanel); % Make container for 'sets' dropdown boxes
-      bui.label('Current set:', hbox); % Add 'Current set' label
-      obj.ParamProfileLabel = bui.label('none', hbox, 'FontWeight', 'bold'); % Current parameter label
-      hbox.Sizes = [60 400]; % Set size of Current set labels
-      hbox = uiextras.HBox('Parent', obj.ParamPanel, 'Spacing', 2); % Make new HBox for saved sets
-      bui.label('Saved sets:', hbox);  % Add 'Saved sets' label
-      obj.NewExpParamProfile = bui.Selector(hbox, {'none'}); % Make parameter sets dropdown box with default 'none' entry
-      uicontrol('Parent', hbox,... % Make 'Load' button
-        'Style', 'pushbutton',...
-        'String', 'Load',...
-        'Callback', @(~,~) obj.loadParamProfile(obj.NewExpParamProfile.Selected)); % Pass selected param profile to loadParamProfile() when pressed
-      uicontrol('Parent', hbox,... % Make 'Save' button
-        'Style', 'pushbutton',...
-        'String', 'Save...',...
-        'Callback', @(~,~) obj.saveParamProfile(),... % When pressed run saveParamProfile() function
-        'Enable', 'on');
-      uicontrol('Parent', hbox,... % Make 'Delete' button
-        'Style', 'pushbutton',...
-        'String', 'Delete...',...
-        'Callback', @(~,~) obj.delParamProfile(),...% When pressed run delParamProfile() function
-        'Enable', 'on');
-      hbox.Sizes = [60 200 60 60 60]; % Set horizontal sizes for Sets dropdowns and buttons
-      obj.ParamPanel.Sizes = [22 22]; % Set vertical size by changing obj.ParamPanel VBox size
-      
-      newExpBox.Sizes = [58+22 -1]; % Set fixed pixel sizes for parameters panel, -1 = fill rest of space with 'Global' and 'Conditional' Panels
-      
-      %a box on the second tab for running experiments
-      runningExpBox = uiextras.VBox('Parent', obj.ExpTabs, 'Padding', 5);
-      obj.ActiveExpsGrid = uiextras.Grid('Parent', runningExpBox, 'Spacing', 5);
-      
-      % setup the tab names/sizes
-      obj.TabPanel.TabSize = 80;
-      obj.TabPanel.TabNames = {'Log' 'Experiments'};
-      obj.TabPanel.SelectedChild = 2;
-      obj.ExpTabs.TabNames = {'New' 'Current'};
-      obj.ExpTabs.SelectedChild = 1;
-      obj.TabPanel.SelectionChangedFcn = @(~,~)obj.tabChanged;
-    end
+
   end
   
 end
