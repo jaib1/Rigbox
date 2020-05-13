@@ -38,6 +38,9 @@ classdef MControl < handle
     % Listener functions for the mc gui for reading from the scale and
     % getting status updates from `RemoteRigs`
     Listeners
+    % `bui.selector` dropdown menu object for selecting an exp framework
+    % in the 'Experiments' - 'New' tab
+    ExpFrameworks
     % `bui.selector` dropdown menu object for selecting an exp def in the
     % 'Experiments' - 'New' tab
     ExpDefs
@@ -104,21 +107,21 @@ classdef MControl < handle
  
     function obj = MControl(parent)
     % `parent` is a figure object
-%       obj.NewExpFactory = struct(...
-%         'label',...
-%         {'ChoiceWorld' 'DiscWorld' 'GaborMapping' ...
-%         'BarMapping' 'SurroundChoiceWorld' '<custom...>'},...
-%         'matchTypes', {{'ChoiceWorld' 'SingleTargetChoiceWorld'},...
-%         {'DiscWorld'},...
-%         {'GaborMapping'},...
-%         {'BarMapping'},...
-%         {'SurroundChoiceWorld'},...
-%         {'custom' ''}},...
-%         'defaultParamsFun',...
-%         {@exp.choiceWorldParams, @exp.discWorldParams,...
-%         @exp.gaborMappingParams,...
-%         @exp.barMappingParams, @()exp.choiceWorldParams('Surround'),...
-%         @exp.inferParameters});
+      obj.NewExpFactory = struct(...
+        'label',...
+        {'ChoiceWorld' 'DiscWorld' 'GaborMapping' ...
+        'BarMapping' 'SurroundChoiceWorld' '<custom...>'},...
+        'matchTypes', {{'ChoiceWorld' 'SingleTargetChoiceWorld'},...
+        {'DiscWorld'},...
+        {'GaborMapping'},...
+        {'BarMapping'},...
+        {'SurroundChoiceWorld'},...
+        {'custom' ''}},...
+        'defaultParamsFun',...
+        {@exp.choiceWorldParams, @exp.discWorldParams,...
+        @exp.gaborMappingParams,...
+        @exp.barMappingParams, @()exp.choiceWorldParams('Surround'),...
+        @exp.inferParameters});
       
       % struct containing all experiment frameworks organized by four
       % fields: 'label' (the name of the framework), 'matchTypes' (the
@@ -128,7 +131,7 @@ classdef MControl < handle
       obj.NewExpFactory =... 
         struct(...
           'label', {'signals'},...
-          'matchTypes', {'signals', 'custom'},...
+          'matchTypes', {{'signals', 'custom'}},...
           'defaultParamsFun', {@exp.inferParameters},...
           'defaultClass', {@exp.SignalsExp});
       % build the ui for the gui
@@ -195,13 +198,12 @@ classdef MControl < handle
                   'Tag', 'Logging Display');
 
       % The `TabPanel` size will vary as a function of the figure size,
-      % while the `LoggingDisplay` size has a fixed height of 72 px
-      obj.RootContainer.Sizes = [-1 72];
+      % while the `LoggingDisplay` size has a fixed height of 100 px
+      obj.RootContainer.Sizes = [-1 100];
       
       % Experiment tabs, which will contain the 'New' and 'Current'
       % experiments tabs
       obj.ExpTabs = uiextras.TabPanel('Parent', obj.TabPanel);
-      obj.ExpTabs.TabTitles{1} = 'Experiments';
       
       % A box in the 'Experiments' tab, which will contain everything
       % needed to start a new experiment
@@ -216,23 +218,42 @@ classdef MControl < handle
       expSelectBox = uix.VBox('Parent', headerBox);
       expSelectGrid = uiextras.Grid('Parent', expSelectBox);
       subjectLabel = bui.label('Subject', expSelectGrid);
-      rigLabel = bui.label('Rig'); 
+      rigLabel = bui.label('Rig', expSelectGrid); 
       frameworkLabel = bui.label('Exp Framework', expSelectGrid); 
       expDefLabel = bui.label('Exp Def', expSelectGrid);
       
-      % subject dropdown menu
+      % subject dropdown menu and listener
       obj.NewExpSubjects =... 
         bui.Selector(expSelectGrid,... 
                      unique([{'default'}; dat.listSubjects])); 
 %       set(subjectLabel, 'FontSize', 11); % Make 'Subject' label larger
 %       set(obj.NewExpSubjects.UIControl, 'FontSize', 11); % Make dropdown box text larger
-      % listener for subject selection
       obj.NewExpSubjects.addlistener('SelectionChanged',...
-                                    @obj.expSubjectChanged); 
+                                     @obj.expSubjectChanged);
+
+      % rig dropdown menu and listeners                           
+      obj.RemoteRigs = bui.Selector(expSelectGrid, srv.stimulusControllers); 
+      obj.RemoteRigs.addlistener('SelectionChanged',...
+                                 @(src,~) obj.remoteRigChanged); 
+      obj.Listeners = arrayfun(@obj.listenToRig, obj.RemoteRigs.Option,...
+                               'UniformOutput', false);
+                                 
+      % exp framework dropdown menu and listeners 
+      obj.ExpFrameworks =... 
+        bui.Selector(expSelectGrid, {obj.NewExpFactory.label});
+      obj.ExpFrameworks.addlistener('SelectionChanged',...
+                                    @(~,~) obj.expTypeChanged());
       
-      obj.ExpDefs =...
-          bui.Selector(expSelectGrid, {obj.NewExpFactory.label});
-      obj.ExpDefs.addlistener('SelectionChanged', @(~,~) obj.expTypeChanged()); % Add listener for experiment type change
+      % exp def dropdown menu and listeners
+      listedExpDefs = what(fullfile(pick(dat.paths, 'expDefinitions')));
+      fullExpDefPaths =...
+          cellfun(@(x) fullfile(listedExpDefs.path, x), listedExpDefs.m,...
+                  'UniformOutput', false);
+      fullExpDefPaths{end + 1} = '<Other>';              
+      obj.ExpDefs = bui.Selector(expSelectGrid, fullExpDefPaths); 
+      obj.ExpDefs.addlistener('SelectionChanged',...
+                              @(~,~) obj.expTypeChanged());
+
       
       expSelectGrid.ColumnSizes = [80, 200]; % Set size of topgrig (containing Subject and Type dropdowns)
       expSelectGrid.RowSizes = [30, 24]; % " 
@@ -240,10 +261,7 @@ classdef MControl < handle
       %configure new exp control box
       controlbox = uiextras.HBox('Parent', expSelectBox);
 %       bui.label('Rig', controlbox); % 'Rig' label
-      obj.RemoteRigs = bui.Selector(controlbox, srv.stimulusControllers); % Rig dropdown box
-      obj.RemoteRigs.addlistener('SelectionChanged', @(src,~) obj.remoteRigChanged); % Add listener for rig selection change
-      obj.Listeners = arrayfun(@obj.listenToRig, obj.RemoteRigs.Option, 'Uni', false); % Add listeners for each rig (keep track of whether they're connected, running, etc.)
-      obj.RigOptionsButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Options' button
+            obj.RigOptionsButton = uicontrol('Parent', controlbox, 'Style', 'pushbutton',... % Add 'Options' button
         'String', 'Options',...
         'TooltipString', 'Set services and delays',...
         'Callback', @(~,~) obj.rigOptions(),... % When pressed run 'rigOptions' function
@@ -362,7 +380,7 @@ classdef MControl < handle
     end
     
     function expSubjectChanged(obj, ~, src)
-        % Function deals with subject dropdown list changes
+        % callback for when subject is changed
         switch src.EventName
             case 'SelectionChanged' % user selected a new subject
                 % 'refresh' experiment type - this method allows the relevent parameters to be loaded for the new subject
@@ -389,32 +407,36 @@ classdef MControl < handle
     end
     
     function expTypeChanged(obj)
-      if strcmp(obj.ExpDefs.Selected, '<custom...>')
+      % callback for when experiment framework or exp def is changed
+      
+      type = obj.ExpFrameworks.Selected;
+      
+      % if the selected exp def is '<Other>', choose it from the file
+      % explorer
+      if strcmpi(obj.ExpDefs.Selected, '<Other>')
         defdir = fullfile(pick(dat.paths, 'expDefinitions'));
         [mfile, fpath] = uigetfile(...
           '*.m', 'Select the experiment definition function', defdir);
         if ~mfile
-          obj.ExpDefs.SelectedIdx = 1; % If no file selected, default back to ChoiceWorld
           return
         end
-        custidx = strcmp({obj.NewExpFactory.label},'<custom...>');
-        obj.NewExpFactory(custidx).defaultParamsFun = ...
-          @()exp.inferParameters(fullfile(fpath, mfile)); % change default paramters function handle to infer params for this specific expDef
-        obj.NewExpFactory(custidx).matchTypes{end+1} = fullfile(fpath, mfile); % add specific expDef to NewExpFactory
       end
       
-      if strcmp(obj.ExpDefs.Selected, '<custom...>')
-        type = 'custom';
-      else
-        type = obj.ExpDefs.Selected;
+      % set parameters based on selected framework
+      switch type
+        case 'signals'
+          idx = strcmp({obj.NewExpFactory.label},'signals');
+          obj.NewExpFactory(idx).defaultParamsFun = ...
+            @()exp.inferParameters(fullfile(fpath, mfile)); % change default paramters function handle to infer params for this specific expDef
+          obj.NewExpFactory(idx).matchTypes{end+1} = fullfile(fpath, mfile); % add specific expDef to NewExpFactory
       end
       
-      stdProfiles = {'<last for subject>'; '<defaults>'};
+      % special cases for default parameter profiles and 'default' subject
+      defaultProfiles = {'<last for subject>'; '<default set>'};
       savedProfiles = fieldnames(dat.loadParamProfiles(type));
-      obj.ParamProfiles.Option = [stdProfiles; savedProfiles];
-      str = iff(strcmp('default', obj.NewExpSubjects.Selected) &...
-          ~strcmp(obj.ExpDefs.Selected, '<custom...>'),...
-          '<defaults>','<last for subject>');
+      obj.ParamProfiles.Option = [defaultProfiles; savedProfiles];
+      str = iff(strcmp('default', obj.NewExpSubjects.Selected),... % && ~strcmp(obj.ExpDefs.Selected, '<custom...>'),
+              '<default set>', '<last for subject>');
       obj.loadParamProfile(str);
     end
     
