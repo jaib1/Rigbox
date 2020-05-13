@@ -566,9 +566,12 @@ classdef MControl < handle
           % list of all subject's experiments, with most recent first
           refs = flipud(dat.listExps(subject));
           % function takes parameters and returns true if of selected type
-          if any(strcmp(matchTypes, 'custom')) % If custom, find last parameter set for specific expDef
-            matching = @(pars) iff(isfield(pars, 'defFunction'),...
-                @()any(strcmpi(pick(pars, 'defFunction'), matchTypes)), false);
+          % If signals, find last parameter set for specific expDef
+          if any(strcmp(matchTypes, 'signals')) 
+            matching =...
+              @(pars) iff(isfield(pars, 'defFunction'),...
+                          @() any(strcmpi(pick(pars, 'defFunction'),...
+                                  matchTypes)), false);
           else
             matching = @(pars) any(strcmp(pick(pars, 'type', 'def', ''), matchTypes));
           end
@@ -582,7 +585,7 @@ classdef MControl < handle
           end
         otherwise
           label = profile;
-          saved = dat.loadParamProfiles(typeNameFinal);
+          saved = dat.loadParamProfiles(typeName);
           paramStruct = saved.(profile);
           paramStruct.type = typeNameFinal; % override type name with preferred
       end
@@ -593,7 +596,11 @@ classdef MControl < handle
         paramStruct = rmfield(paramStruct, 'services');
       end
       obj.Parameters.Struct = paramStruct;
-      if isempty(paramStruct); return; end
+      if isempty(paramStruct)
+          obj.log('Couldn''t find ''%s'' parameters for ''%s''',...
+                  profile, subject);
+          return; 
+      end
       % Now parameters are loaded, pass to ParamEditor for display, etc.
       if isempty(obj.ParamEditor)
         obj.ParamEditor = eui.ParamEditor(obj.Parameters, obj.ParamPanel); % Build parameter list in Global panel by calling eui.ParamEditor
@@ -605,7 +612,7 @@ classdef MControl < handle
         set(obj.BeginExpButton, 'Enable', 'on') % Re-enable start button
       end
     end
-    
+
     function paramChanged(obj)
       % PARAMCHANGED Indicate to user that parameters have been updated
       %  Changes the label above the ParamEditor indicating that the
